@@ -1,0 +1,323 @@
+﻿@page
+@model Ypf.Xncf.FileCenterModul.Areas.FileCenterModul.Pages.FileManager
+@{
+    ViewData["Title"] = "FileCenterModul 首页";
+    Layout = "_Layout_Vue";
+}
+
+@section breadcrumbs{
+    <el-breadcrumb-item>扩展模块</el-breadcrumb-item>
+    <el-breadcrumb-item>文件中心</el-breadcrumb-item>
+    <el-breadcrumb-item>文件管理</el-breadcrumb-item>
+}
+<div>
+    <div class="">
+        <div class="filter-container">
+            <el-upload class="upload-demo"
+                       ref="upload"
+                       name="files"
+                       :multiple="true"
+                       action="/api/Ypf.Xncf.FileCenterModul/FileCenterAppService/Xncf.FileCenterModul_FileCenterAppService.Upload"
+                       :auto-upload="false">
+                <el-button slot="trigger" size="small" type="primary">选取文件</el-button>
+                <el-button style="margin-left: 10px;" size="small" type="success" @@click="submitUpload">上传到服务器</el-button>
+            </el-upload>
+        </div>
+        <el-table :data="tableData"
+                  border
+                  style="width: 100%">
+            <el-table-column align="center"
+                             label="文件ID">
+                <template slot-scope="scope">
+                    {{ scope.row.fileId}}
+                </template>
+            </el-table-column>
+            <el-table-column align="center"
+                             label="文件名">
+                <template slot-scope="scope">
+                    {{ scope.row.fileName}}
+                </template>
+            </el-table-column>
+            <el-table-column align="center"
+                             label="扩展名">
+                <template slot-scope="scope">
+                    {{ scope.row.eXpandedName}}
+                </template>
+            </el-table-column>
+            <el-table-column align="center"
+                             label="容量(KB)">
+                <template slot-scope="scope">
+                    {{ scope.row.size}}
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" align="center">
+                <template slot-scope="scope">
+                    <el-button size="mini"
+                               type="primary"
+                               v-has="['role-edit']"
+                               @@click="handleDownLoad(scope.row.fileId)">下载</el-button>
+                    <el-popconfirm placement="top" title="确认删除此文件吗？" @@on-confirm="handleDelete(scope.row.fileId)">
+                        <el-button size="mini" type="danger" slot="reference">删除</el-button>
+                    </el-popconfirm>
+                </template>
+            </el-table-column>
+        </el-table>
+        <pagination :total="paginationQuery.total"
+                    :page.sync="listQuery.pageIndex"
+                    :limit.sync="listQuery.pageSize"
+                    @@pagination="getList"></pagination>
+    </div>
+</div>
+@section scripts{
+    <script>
+        var app = new Vue({
+            el: "#app",
+            data() {
+                return {
+                    //分页参数
+                    paginationQuery: {
+                        total: 5
+                    },
+                    //分页接口传参
+                    listQuery: {
+                        pageIndex: 1,
+                        pageSize: 20,
+                        roleName: '',
+                        orderField: ''
+                    },
+                    tableData: [],
+                    dialog: {
+                        title: '新增角色',
+                        visible: false,
+                        data: {
+                            roleName: '', roleCode: '', adminRemark: '', remark: '', addTime: '', id: '', enabled: false
+                        },
+                        rules: {
+                            roleName: [
+                                { required: true, message: "角色名称为必填项", trigger: "blur" }
+                            ],
+                            roleCode: [{ required: true, message: "角色代码为必填项", trigger: "blur" }]
+                        },
+                        updateLoading: false
+                    },
+                    // 树结构字段
+                    defaultProps: {
+                        children: 'children',
+                        label: 'menuName'
+                    },
+                    // 授权
+                    au: {
+                        title: '',
+                        visible: false,
+                        updateLoading: false,
+                        temp: {}
+                    },
+                    allMenu: [],// 所有权限
+                    currMenu: [],// 当前权限
+                    defaultExpandedKeys: [], // 默认展开
+                    defaultCheckedKeys: [], // 默认选中
+                    parentArr: [] // 父节点集合
+                };
+            },
+            created: function () {
+                this.getList();
+            },
+            watch: {
+                'dialog.visible': function (val, old) {
+                    // 关闭dialog，清空
+                    if (!val) {
+                        this.dialog.data = {
+                            roleName: '', roleCode: '', adminRemark: '', remark: '', addTime: '', id: ''
+                        };
+                        this.dialog.updateLoading = false;
+                    }
+                },
+                'au.visible': function (val, old) {
+                    // 关闭dialog，清空
+                    if (!val) {
+                        this.currMenu = [];
+                        this.defaultCheckedKeys = [];
+                        this.defaultExpandedKeys = [];
+                        this.au.updateLoading = false;
+                    }
+                }
+            },
+            methods: {
+                // 权限
+                async handleRole(index, row) {
+                    // 打开dialog
+                    this.au = {
+                        title: row.roleName,
+                        visible: true,
+                        temp: row
+                    };
+                    // 当前已有权限
+                    const c = await service.get(`/Admin/Role/Permission?handler=RolePermission&roleId=${row.id}`);
+                    this.currMenu = c.data.data;
+                    let defaultCheckedKeys = [];
+                    this.currMenu.map(res => {
+                        defaultCheckedKeys.push(res.permissionId);
+                    });
+
+                    const a = await service.get('/Admin/Menu/Edit?handler=menu');
+                    const b = a.data.data;
+                    let allMenu = [];
+                    // 父节点的集合, 用于求默认和条件为父节点时的差集，解决element tree无半选问题。
+                    let parentMenuNodes = [];
+                    this.ddd(b, null, allMenu, parentMenuNodes);
+                    this.allMenu = allMenu
+                    // 所有权限  格式后的数据(用于渲染tree)
+                    const e = [];
+                    parentMenuNodes.map((res) => {
+                        defaultCheckedKeys.map((ele) => {
+                            if (res !== ele && parentMenuNodes.indexOf(ele) < 0 && e.indexOf(ele) < 0) {
+                                e.push(ele);
+                            }
+                        });
+                    });
+                    this.defaultCheckedKeys = e;
+                },
+                ddd(source, parentId, dest, nodes) {
+                    var array = source.filter(_ => _.parentId === parentId);
+                    for (let i in array) {
+                        let ele = array[i];
+                        ele.children = [];
+                        dest.push(ele);
+                        this.ddd(source, ele.id, ele.children, nodes);
+                        if (ele.children.length > 0) {
+                            nodes.push(ele.id);
+                        }
+                    }
+                },
+                // 更新授权
+                async auUpdateData() {
+                    this.au.updateLoading = true;
+                    const checkNodes = this.$refs.tree.getCheckedNodes(false, true);
+                    let array = [];
+                    checkNodes.map((ele) => {
+                        array.push({
+                            PermissionId: ele.id,
+                            roleId: this.au.temp.id,
+                            isMenu: ele.isMenu,
+                            roleCode: ele.resourceCode
+                        });
+                    });
+                    const respnseData = await service.post('/Admin/Role/Permission', array);
+                    if (respnseData.data.success) {
+                        this.getList();
+                        this.$notify({
+                            title: "Success",
+                            message: "授权成功",
+                            type: "success",
+                            duration: 800,
+                            onClose: function () {
+                                app.au.visible = false;
+                                app.au.updateLoading = false;
+                                window.location.reload();
+                            }
+                        });
+                    }
+                },
+                // 初始化获取数据
+                getList() {
+                    let { pageIndex, pageSize, roleName, orderField } = this.listQuery;
+                    service.get(`/Admin/FileCenterModul/FileManager?handler=List&fileFullName=&pageIndex=${pageIndex}&pageSize=${pageSize}&fileId=`).then(res => {
+                        console.log(res.data)
+                        this.tableData = res.data.data.list;
+                        this.paginationQuery.total = res.data.data.totalCount;
+                    });
+                },
+                /**
+                 * 下载
+                 */
+                handleDownLoad(fileId) {
+                    if (fileId) {
+                        service.get(`/Admin/FileCenterModul/FileManager?handler=DownLoad&fileId=${fileId}`).then(res => {
+                            let data = res.data.data
+                            if (data.res) {
+                                dataURLtoFile(data.fileContent, data.filenName, data.extName)
+                            } else {
+                                this.$notify({
+                                    title: "消息",
+                                    message: data.msg,
+                                    type: "danger",
+                                    duration: 5000
+                                });
+                            }
+                        });
+                    }
+                },
+                /**
+                 * 上传文件
+                 */
+                submitUpload() {
+                    // 第一种：提交到action的配置地址webapi方式【element默认的提交方式】
+                    //this.$refs.upload.submit();
+
+                    //第二种：自定义提交文件【数据提交到Razor页面后台】
+                    let files = this.$refs.upload.uploadFiles.pop().raw;//这里获取上传的文件对象
+                    let formData = new FormData();
+                    formData.append("UploadFiles", files);
+                    service.post("/Admin/FileCenterModul/FileManager?handler=Upload", formData).then(res => {
+                        console.log(res.data);
+                        if (res.data.success && res.data.data.res) {
+                            this.$message({
+                                message: res.data.data.msg,
+                                type: 'success'
+                            });
+                        }
+                        this.getList();
+                    })
+                },
+                /**
+                 * 删除文件
+                 */
+                handleDelete(fileId) {
+                    service.get(`/Admin/FileCenterModul/FileManager?handler=Delete&fileId=${fileId}`).then(res => {
+                        if (res.data.data.res) {
+                            this.getList();
+                            this.$notify({
+                                title: "消息",
+                                message: "删除成功",
+                                type: "success",
+                                duration: 2000
+                            });
+                        }
+                    });
+                }
+            }
+
+        });
+
+        //将base64转换为文件对象
+        function dataURLtoFile(dataurl, filename, extName) {
+            var arr = dataurl.split(',');
+            var bstr = atob(arr[0]);
+            var n = bstr.length;
+            var u8arr = new Uint8Array(n);
+            while (n--) {
+                u8arr[n] = bstr.charCodeAt(n);
+            }
+            //转换成file对象
+            let f = new File([u8arr], filename, { type: extName });
+            // 创建blob对象
+            const blob = new Blob([f]);
+
+            // 创建a标签，通过a标签实现下载
+            const dom = document.createElement("a");
+            dom.download = filename;
+            dom.href = URL.createObjectURL(blob);
+            dom.id = "downfile-a";
+            dom.style.display = "none";
+            document.body.appendChild(dom)
+
+            // 触发点击事件
+            dom.click();
+
+            // 释放资源
+            URL.revokeObjectURL(dom.href);
+            document.getElementById("downfile-a")?.remove();
+        }
+    </script>
+}
+
